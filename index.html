@@ -1,1 +1,486 @@
-DEVICE TEST
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#07090b">
+<title>COURT VISION AI — Device Test</title>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js"></script>
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#07090b; --card:#12161a; --line:#222a31; --text:#e8f0ea; --muted:#8a98a0;
+  --lime:#c6ff3d; --teal:#00e5d4; --warn:#ffb84d; --fail:#ff5d6c; --grey:#6b7780;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.45;padding:16px}
+header{margin-bottom:14px}
+.brand{font-weight:800;letter-spacing:.12em;color:var(--lime);font-size:20px}
+.sub{color:var(--teal);font-size:12px;letter-spacing:.08em;text-transform:uppercase}
+h2{font-size:15px;margin:0 0 10px;color:var(--teal);letter-spacing:.04em}
+.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 4px;text-align:center}
+.stat b{display:block;font-size:20px}
+.stat span{font-size:11px;color:var(--muted)}
+.grid{display:grid;gap:10px;grid-template-columns:1fr}
+@media(min-width:720px){.grid{grid-template-columns:1fr 1fr}}
+.card,.panel{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px}
+.panel{margin-top:14px}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.name{font-weight:600;font-size:14px}
+.badge{font-size:11px;font-weight:700;padding:3px 8px;border-radius:999px;white-space:nowrap}
+.detail{font-size:13px;margin-top:6px;word-break:break-word}
+.why{font-size:12px;color:var(--muted);margin-top:6px}
+.pass{color:var(--lime)} .warning{color:var(--warn)} .failed{color:var(--fail)} .not-run{color:var(--grey)}
+.badge.pass{background:rgba(198,255,61,.12);color:var(--lime)}
+.badge.warning{background:rgba(255,184,77,.12);color:var(--warn)}
+.badge.failed{background:rgba(255,93,108,.12);color:var(--fail)}
+.badge.not-run{background:rgba(107,119,128,.15);color:var(--grey)}
+.stat.pass b{color:var(--lime)} .stat.warning b{color:var(--warn)} .stat.failed b{color:var(--fail)} .stat.not-run b{color:var(--grey)}
+.btns{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+button{background:transparent;color:var(--lime);border:1px solid var(--lime);border-radius:10px;padding:11px 8px;font-size:13px;font-weight:600;cursor:pointer;min-height:44px}
+button.primary{background:var(--lime);color:#06100a}
+button:disabled{opacity:.4}
+.media{display:grid;gap:8px;margin-top:10px}
+video{width:100%;background:#000;border-radius:10px;border:1px solid var(--line)}
+pre{background:#050709;border:1px solid var(--line);border-radius:10px;padding:10px;font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto;color:#cfd8d2}
+.note{font-size:12px;color:var(--muted);margin:0 0 10px}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">COURT VISION AI</div>
+  <div class="sub">Device Test · Phase 1</div>
+</header>
+
+<section class="summary" id="summary"></section>
+<section class="grid" id="grid"></section>
+
+<section class="panel">
+  <h2>Kamera & Rekaman</h2>
+  <p class="note">Tes kamera dan rekaman harus ditekan manual, karena browser meminta izin dari Anda.</p>
+  <div class="btns">
+    <button id="btnCam" class="primary">Test Camera</button>
+    <button id="btnStartRec">Start Recording</button>
+    <button id="btnStopRec">Stop Recording</button>
+    <button id="btnPlay">Play Recorded Video</button>
+  </div>
+  <div class="media">
+    <video id="preview" muted playsinline autoplay></video>
+    <video id="player" controls playsinline></video>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Pengujian Lain</h2>
+  <div class="btns">
+    <button id="btnWebGPU">Test WebGPU</button>
+    <button id="btnOnnx">Test ONNX Runtime</button>
+    <button id="btnIdb">Test IndexedDB</button>
+    <button id="btnBench">Run Performance Benchmark</button>
+    <button id="btnAuto" class="primary" style="grid-column:1/-1">Jalankan Semua Tes Otomatis</button>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Laporan Hasil Pengujian</h2>
+  <pre id="report">Belum ada pengujian.</pre>
+  <div class="btns" style="margin-top:8px">
+    <button id="btnCopy" style="grid-column:1/-1">Salin Laporan</button>
+  </div>
+</section>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const ua = navigator.userAgent;
+  const R = {};
+  let stream = null, recorder = null, chunks = [], recStart = 0, recMime = '', lastUrl = null;
+
+  const TESTS = [
+    { id:'browser',    title:'Browser Compatibility', why:'Chrome di Android dengan koneksi aman (HTTPS) adalah kondisi paling stabil untuk kamera dan AI di browser.' },
+    { id:'camera_api', title:'Camera API',            why:'Apakah browser menyediakan fitur akses kamera (getUserMedia).' },
+    { id:'camera_perm',title:'Izin Kamera',           why:'Apakah Anda sudah memberi izin kamera ke situs ini.' },
+    { id:'camera_str', title:'Test Camera (Resolusi & FPS)', why:'Target aplikasi: 1080p 60 FPS dari kamera belakang. Hasil ini adalah resolusi dan FPS yang benar-benar diberikan kamera.' },
+    { id:'mediarec',   title:'MediaRecorder Support', why:'Apakah browser bisa merekam video dari kamera.' },
+    { id:'recording',  title:'Video Recording',       why:'Rekaman uji singkat benar-benar dibuat dan memiliki ukuran data.' },
+    { id:'playback',   title:'Video Playback',        why:'Rekaman bisa diputar kembali di halaman ini.' },
+    { id:'webgpu',     title:'WebGPU',                why:'Akselerasi GPU untuk AI. Tes ini menjalankan komputasi kecil di GPU dan memeriksa hasilnya.' },
+    { id:'wasm',       title:'WebAssembly (WASM)',    why:'Jalur cadangan CPU jika WebGPU tidak tersedia. Dicek dengan memvalidasi modul WASM minimal.' },
+    { id:'onnx',       title:'ONNX Runtime Web',      why:'Mesin untuk menjalankan model AI (.onnx) di browser. Tes membuat model kecil dan menjalankannya.' },
+    { id:'idb',        title:'IndexedDB',             why:'Penyimpanan database lokal di HP untuk menyimpan video dan data pertandingan secara offline.' },
+    { id:'storage',    title:'Estimasi Penyimpanan',  why:'Perkiraan ruang penyimpanan yang tersedia untuk video dan model AI.' },
+    { id:'worker',     title:'Web Worker',            why:'Pemrosesan di latar belakang agar layar tidak macet saat AI bekerja.' },
+    { id:'perf',       title:'Performa Pemrosesan Video', why:'Mengukur kecepatan pengolahan piksel 720p dengan data sintetis. Ini bukan tes AI bola.' }
+  ];
+
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const cls = s => s.toLowerCase().replace(' ', '-');
+
+  function set(id, status, detail) {
+    R[id] = { status, detail, time: new Date().toLocaleTimeString('id-ID') };
+    render();
+  }
+
+  function render() {
+    const counts = { PASS:0, WARNING:0, FAILED:0, 'NOT RUN':0 };
+    $('grid').innerHTML = TESTS.map(t => {
+      const r = R[t.id] || { status:'NOT RUN', detail:'Belum diuji. Jalankan tombol terkait.' };
+      counts[r.status]++;
+      return `<div class="card">
+        <div class="row"><span class="name">${esc(t.title)}</span><span class="badge ${cls(r.status)}">${r.status}</span></div>
+        <div class="detail">${esc(r.detail)}</div>
+        <div class="why">${esc(t.why)}</div></div>`;
+    }).join('');
+    $('summary').innerHTML = Object.entries(counts).map(([k, v]) =>
+      `<div class="stat ${cls(k)}"><b>${v}</b><span>${k}</span></div>`).join('');
+    buildReport();
+  }
+
+  function buildReport() {
+    const lines = [
+      'LAPORAN DEVICE TEST — COURT VISION AI',
+      'Waktu: ' + new Date().toLocaleString('id-ID'),
+      'Perangkat: ' + ua,
+      ''
+    ];
+    TESTS.forEach(t => {
+      const r = R[t.id];
+      lines.push(`[${r ? r.status : 'NOT RUN'}] ${t.title}`);
+      if (r) lines.push('    ' + r.detail);
+    });
+    $('report').textContent = lines.join('\n');
+  }
+
+  // ---------- Tes dasar ----------
+  function testBasics() {
+    const isChrome = /Chrome\//.test(ua) && !/Edg\//.test(ua) && !/OPR\//.test(ua) && !/SamsungBrowser/.test(ua);
+    const isAndroid = /Android/.test(ua);
+    let st, msg;
+    if (!window.isSecureContext) { st = 'FAILED'; msg = 'Halaman tidak berjalan di koneksi aman (HTTPS). Kamera tidak akan bisa diakses.'; }
+    else if (isChrome && isAndroid) { st = 'PASS'; msg = 'Chrome di Android terdeteksi, koneksi aman.'; }
+    else { st = 'WARNING'; msg = (isChrome ? 'Chrome terdeteksi' : 'Bukan Chrome') + (isAndroid ? '' : ', bukan Android') + '. Target utama adalah Chrome di Android.'; }
+    set('browser', st, msg);
+
+    const hasCam = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+    set('camera_api', hasCam ? 'PASS' : 'FAILED', hasCam ? 'navigator.mediaDevices.getUserMedia tersedia.' : 'Browser tidak mendukung akses kamera.');
+
+    if (typeof MediaRecorder === 'undefined') {
+      set('mediarec', 'FAILED', 'MediaRecorder tidak tersedia di browser ini.');
+    } else {
+      const cands = ['video/mp4','video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];
+      const ok = cands.filter(m => MediaRecorder.isTypeSupported(m));
+      set('mediarec', ok.length ? 'PASS' : 'WARNING',
+        ok.length ? 'Format rekaman didukung: ' + ok.join(', ') : 'MediaRecorder ada, tetapi format umum tidak terdeteksi.');
+    }
+  }
+
+  async function testPermission() {
+    try {
+      const p = await navigator.permissions.query({ name:'camera' });
+      if (p.state === 'granted') set('camera_perm', 'PASS', 'Izin kamera sudah diberikan.');
+      else if (p.state === 'prompt') set('camera_perm', 'WARNING', 'Izin belum diminta. Tekan "Test Camera" untuk memberi izin.');
+      else set('camera_perm', 'FAILED', 'Izin kamera ditolak. Buka pengaturan situs di Chrome dan izinkan kamera.');
+    } catch (e) {
+      set('camera_perm', 'WARNING', 'Status izin tidak bisa dicek otomatis. Tekan "Test Camera" untuk mengeceknya langsung.');
+    }
+  }
+
+  // ---------- Kamera ----------
+  async function testCamera() {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    set('camera_str', 'WARNING', 'Meminta akses kamera...');
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal:'environment' }, width: { ideal:1920 }, height: { ideal:1080 }, frameRate: { ideal:60 } },
+        audio: false
+      });
+      const s = stream.getVideoTracks()[0].getSettings();
+      const w = s.width || 0, h = s.height || 0, f = Math.round(s.frameRate || 0);
+      $('preview').srcObject = stream;
+      await $('preview').play().catch(() => {});
+      let st, msg;
+      if (h >= 1080 && f >= 30) st = 'PASS';
+      else if (h >= 720) st = 'WARNING';
+      else st = 'FAILED';
+      msg = `Resolusi ${w}x${h}, FPS ${f}. ` +
+        (st === 'PASS' ? 'Sesuai target 1080p.' : 'Di bawah target 1080p / 30 FPS. Aplikasi akan memakai pengaturan yang lebih ringan.');
+      set('camera_str', st, msg);
+      set('camera_perm', 'PASS', 'Kamera berhasil diakses, izin sudah diberikan.');
+    } catch (e) {
+      const map = {
+        NotAllowedError: 'Izin kamera ditolak.',
+        NotFoundError: 'Kamera tidak ditemukan di perangkat.',
+        NotReadableError: 'Kamera sedang dipakai aplikasi lain.',
+        OverconstrainedError: 'Kamera tidak mendukung pengaturan yang diminta.'
+      };
+      set('camera_str', 'FAILED', (map[e.name] || 'Error: ' + e.message));
+    }
+  }
+
+  // ---------- Rekaman ----------
+  function startRecording() {
+    if (!stream) return set('recording', 'FAILED', 'Jalankan "Test Camera" dulu.');
+    if (recorder && recorder.state === 'recording') return;
+    const pick = ['video/mp4','video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'].find(m => MediaRecorder.isTypeSupported(m));
+    if (!pick) return set('recording', 'FAILED', 'Tidak ada format rekaman yang didukung.');
+    recMime = pick;
+    chunks = [];
+    try {
+      recorder = new MediaRecorder(stream, { mimeType: pick, videoBitsPerSecond: 8000000 });
+      recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+      recorder.onstop = finishRecording;
+      recStart = Date.now();
+      recorder.start(1000);
+      set('recording', 'WARNING', 'Sedang merekam... tekan "Stop Recording" setelah beberapa detik.');
+    } catch (e) {
+      set('recording', 'FAILED', 'Gagal memulai rekaman: ' + e.message);
+    }
+  }
+
+  function stopRecording() {
+    if (!recorder || recorder.state !== 'recording') return set('recording', 'FAILED', 'Belum ada rekaman yang berjalan.');
+    recorder.stop();
+  }
+
+  function finishRecording() {
+    const dur = (Date.now() - recStart) / 1000;
+    const blob = new Blob(chunks, { type: recMime });
+    const mb = (blob.size / 1048576).toFixed(2);
+    if (lastUrl) URL.revokeObjectURL(lastUrl);
+    lastUrl = URL.createObjectURL(blob);
+    $('player').src = lastUrl;
+    if (blob.size > 0 && dur > 1) set('recording', 'PASS', `Rekaman ${dur.toFixed(1)} detik, ukuran ${mb} MB, format ${recMime}.`);
+    else set('recording', 'FAILED', `Rekaman gagal atau terlalu pendek (${dur.toFixed(1)} detik, ${mb} MB).`);
+  }
+
+  function playRecording() {
+    if (!lastUrl) return set('playback', 'FAILED', 'Belum ada rekaman. Lakukan Start dan Stop Recording dulu.');
+    const p = $('player');
+    p.onloadeddata = () => {
+      if (p.videoWidth > 0) set('playback', 'PASS', `Video dapat diputar, resolusi ${p.videoWidth}x${p.videoHeight}.`);
+      else set('playback', 'FAILED', 'Video dimuat tetapi tidak punya gambar.');
+    };
+    p.onerror = () => set('playback', 'FAILED', 'Video rekaman tidak bisa diputar.');
+    p.src = lastUrl;
+    p.load();
+    p.play().catch(() => {});
+  }
+
+  // ---------- WebGPU & WASM ----------
+  async function testWebGPU() {
+    if (!navigator.gpu) {
+      set('webgpu', 'WARNING', 'WebGPU tidak tersedia di browser ini. Aplikasi akan memakai WASM sebagai cadangan.');
+      testWASM();
+      return;
+    }
+    try {
+      const adapter = await navigator.gpu.requestAdapter();
+      if (!adapter) { set('webgpu', 'WARNING', 'WebGPU ada, tetapi GPU tidak ditemukan. Akan memakai WASM.'); testWASM(); return; }
+      const dev = await adapter.requestDevice();
+      const code = `@group(0) @binding(0) var<storage, read_write> d: array<f32>;
+@compute @workgroup_size(1) fn main(@builtin(global_invocation_id) id: vec3<u32>) { d[id.x] = d[id.x] * 2.0; }`;
+      const input = new Float32Array([1, 2, 3, 4]);
+      const buf = dev.createBuffer({ size:16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+      const read = dev.createBuffer({ size:16, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+      dev.queue.writeBuffer(buf, 0, input);
+      const pipe = dev.createComputePipeline({ layout:'auto', compute:{ module: dev.createShaderModule({ code }), entryPoint:'main' } });
+      const bg = dev.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries:[{ binding:0, resource:{ buffer: buf } }] });
+      const enc = dev.createCommandEncoder();
+      const pass = enc.beginComputePass();
+      pass.setPipeline(pipe); pass.setBindGroup(0, bg); pass.dispatchWorkgroups(4); pass.end();
+      enc.copyBufferToBuffer(buf, 0, read, 0, 16);
+      dev.queue.submit([enc.finish()]);
+      await read.mapAsync(GPUMapMode.READ);
+      const out = new Float32Array(read.getMappedRange().slice(0));
+      read.unmap();
+      const ok = out.every((v, i) => v === input[i] * 2);
+      const info = adapter.info ? (adapter.info.vendor || adapter.info.architecture || '') : '';
+      if (ok) set('webgpu', 'PASS', 'Komputasi GPU berhasil dan hasilnya benar. ' + (info ? 'GPU: ' + info : ''));
+      else set('webgpu', 'FAILED', 'Komputasi GPU berjalan, tetapi hasilnya salah. Akan memakai WASM.');
+      dev.destroy && dev.destroy();
+    } catch (e) {
+      set('webgpu', 'WARNING', 'WebGPU gagal dijalankan (' + e.message + '). Akan memakai WASM.');
+    }
+    testWASM();
+  }
+
+  function testWASM() {
+    if (typeof WebAssembly === 'undefined') return set('wasm', 'FAILED', 'WebAssembly tidak tersedia.');
+    const minimal = new Uint8Array([0,97,115,109,1,0,0,0]); // header modul WASM kosong yang valid
+    const ok = WebAssembly.validate(minimal);
+    set('wasm', ok ? 'PASS' : 'FAILED', ok ? 'WebAssembly tersedia dan modul uji tervalidasi.' : 'WebAssembly tidak bisa memvalidasi modul.');
+  }
+
+  // ---------- ONNX Runtime Web ----------
+  // Membuat model ONNX kecil (operasi Identity) dengan encoder protobuf sederhana.
+  function buildTinyOnnx() {
+    const varint = n => { const o = []; while (n > 127) { o.push((n & 127) | 128); n >>>= 7; } o.push(n); return o; };
+    const key = (f, w) => varint((f << 3) | w);
+    const ld = (f, b) => [...key(f, 2), ...varint(b.length), ...b];
+    const str = (f, s) => ld(f, [...new TextEncoder().encode(s)]);
+    const vi = (f, n) => [...key(f, 0), ...varint(n)];
+    const node = [...str(1,'x'), ...str(2,'y'), ...str(4,'Identity')];
+    const valueInfo = name => [...str(1, name), ...ld(2, ld(1, [...vi(1, 1), ...ld(2, ld(1, vi(1, 1)))]))];
+    const graph = [...ld(1, node), ...str(2,'g'), ...ld(11, valueInfo('x')), ...ld(12, valueInfo('y'))];
+    const model = [...vi(1, 7), ...ld(8, vi(2, 13)), ...ld(7, graph)];
+    return new Uint8Array(model);
+  }
+
+  async function testONNX() {
+    if (typeof ort === 'undefined') {
+      return set('onnx', 'FAILED', 'Library ONNX Runtime tidak termuat. Periksa koneksi internet atau CDN.');
+    }
+    try {
+      ort.env.wasm.numThreads = 1;
+      ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';
+      const providers = navigator.gpu ? ['webgpu', 'wasm'] : ['wasm'];
+      let session, used = providers[0];
+      try {
+        session = await ort.InferenceSession.create(buildTinyOnnx(), { executionProviders: providers });
+      } catch (e) {
+        used = 'wasm';
+        session = await ort.InferenceSession.create(buildTinyOnnx(), { executionProviders: ['wasm'] });
+      }
+      const out = await session.run({ x: new ort.Tensor('float32', new Float32Array([42.5]), [1]) });
+      const y = out[session.outputNames[0]].data[0];
+      if (Math.abs(y - 42.5) < 1e-4) set('onnx', 'PASS', `Model ONNX uji berhasil dijalankan. Backend yang dipakai: ${used}.`);
+      else set('onnx', 'FAILED', `Model berjalan tetapi hasilnya salah (${y}).`);
+    } catch (e) {
+      set('onnx', 'FAILED', 'ONNX Runtime gagal: ' + e.message);
+    }
+  }
+
+  // ---------- IndexedDB ----------
+  function idbOpen() {
+    return new Promise((res, rej) => {
+      const r = indexedDB.open('court_vision_test', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('probe', { keyPath:'id' });
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    });
+  }
+
+  async function testIDB() {
+    if (!window.indexedDB) return set('idb', 'FAILED', 'IndexedDB tidak tersedia.');
+    try {
+      const db = await idbOpen();
+      const stamp = Date.now();
+      await new Promise((res, rej) => {
+        const tx = db.transaction('probe', 'readwrite');
+        tx.objectStore('probe').put({ id:'uji', stamp });
+        tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+      });
+      const got = await new Promise((res, rej) => {
+        const req = db.transaction('probe', 'readonly').objectStore('probe').get('uji');
+        req.onsuccess = () => res(req.result); req.onerror = () => rej(req.error);
+      });
+      db.close();
+      if (got && got.stamp === stamp) set('idb', 'PASS', 'Tulis dan baca data lokal berhasil.');
+      else set('idb', 'FAILED', 'Data yang ditulis tidak sama dengan data yang dibaca.');
+    } catch (e) {
+      set('idb', 'FAILED', 'IndexedDB gagal: ' + e.message);
+    }
+  }
+
+  // ---------- Storage ----------
+  async function testStorage() {
+    try {
+      const est = await navigator.storage.estimate();
+      const q = est.quota || 0, u = est.usage || 0;
+      const gb = x => (x / 1073741824).toFixed(2) + ' GB';
+      const st = q >= 2e9 ? 'PASS' : q >= 5e8 ? 'WARNING' : 'FAILED';
+      set('storage', st, `Perkiraan kuota ${gb(q)}, terpakai ${gb(u)}. Kuota ini perkiraan browser, bukan ruang kosong sebenarnya.`);
+    } catch (e) {
+      set('storage', 'WARNING', 'Estimasi penyimpanan tidak tersedia di browser ini.');
+    }
+  }
+
+  // ---------- Web Worker ----------
+  function testWorker() {
+    return new Promise(resolve => {
+      let w;
+      const timer = setTimeout(() => { set('worker', 'FAILED', 'Worker tidak merespons dalam 3 detik.'); if (w) w.terminate(); resolve(); }, 3000);
+      try {
+        const code = 'self.onmessage = e => self.postMessage(e.data * 2);';
+        w = new Worker(URL.createObjectURL(new Blob([code], { type:'application/javascript' })));
+        w.onmessage = e => {
+          clearTimeout(timer);
+          if (e.data === 42) set('worker', 'PASS', 'Worker berjalan di latar belakang dan membalas dengan benar.');
+          else set('worker', 'FAILED', 'Worker membalas dengan hasil salah.');
+          w.terminate(); resolve();
+        };
+        w.onerror = () => { clearTimeout(timer); set('worker', 'FAILED', 'Worker gagal dibuat.'); resolve(); };
+        w.postMessage(21);
+      } catch (e) {
+        clearTimeout(timer);
+        set('worker', 'FAILED', 'Web Worker tidak didukung: ' + e.message);
+        resolve();
+      }
+    });
+  }
+
+  // ---------- Benchmark ----------
+  async function runBench() {
+    set('perf', 'WARNING', 'Benchmark sedang berjalan...');
+    const W = 1280, H = 720, FRAMES = 30;
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    const img = ctx.createImageData(W, H);
+    for (let i = 0; i < img.data.length; i++) img.data[i] = (i * 31) & 255;
+    const times = [];
+    for (let f = 0; f < FRAMES; f++) {
+      const t0 = performance.now();
+      const d = img.data;
+      for (let p = 0; p < d.length; p += 4) {
+        const g = (d[p] * 0.299 + d[p+1] * 0.587 + d[p+2] * 0.114) | 0;
+        const v = g > 128 ? 255 : 0;
+        d[p] = d[p+1] = d[p+2] = v;
+      }
+      ctx.putImageData(img, 0, 0);
+      times.push(performance.now() - t0);
+      if (f % 5 === 4) await new Promise(r => setTimeout(r, 0));
+    }
+    const avg = times.reduce((a, b) => a + b, 0) / times.length;
+    const fps = 1000 / avg;
+    const st = fps >= 30 ? 'PASS' : fps >= 15 ? 'WARNING' : 'FAILED';
+    set('perf', st, `Pengolahan piksel 720p: rata-rata ${avg.toFixed(1)} ms per frame (≈ ${fps.toFixed(1)} FPS). Ini benchmark data sintetis, bukan deteksi bola.`);
+  }
+
+  // ---------- Otomatis ----------
+  async function runAuto() {
+    testBasics();
+    await testPermission();
+    await testStorage();
+    await testIDB();
+    await testWorker();
+    await testWebGPU();
+    await testONNX();
+    await runBench();
+  }
+
+  // ---------- Tombol ----------
+  $('btnCam').onclick = testCamera;
+  $('btnStartRec').onclick = startRecording;
+  $('btnStopRec').onclick = stopRecording;
+  $('btnPlay').onclick = playRecording;
+  $('btnWebGPU').onclick = testWebGPU;
+  $('btnOnnx').onclick = testONNX;
+  $('btnIdb').onclick = testIDB;
+  $('btnBench').onclick = runBench;
+  $('btnAuto').onclick = runAuto;
+  $('btnCopy').onclick = async () => {
+    const txt = $('report').textContent;
+    try { await navigator.clipboard.writeText(txt); alert('Laporan disalin.'); }
+    catch (e) { alert('Gagal menyalin. Pilih teks laporan secara manual.'); }
+  };
+
+  render();
+})();
+</script>
+</body>
+</html>

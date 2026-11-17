@@ -79,7 +79,7 @@ pre{background:#050709;border:1px solid var(--line);border-radius:10px;padding:1
     <button id="btnUndo" disabled>Undo Titik</button>
     <button id="btnReset" class="danger" disabled>Ulangi Semua</button>
   </div>
-  <p class="note">Urutan ketuk: 1) pojok jauh kiri, 2) pojok jauh kanan, 3) pojok dekat kanan, 4) pojok dekat kiri. Garis biru adalah lapangan hasil kalibrasi.</p>
+  <p class="note">Urutan ketuk: 1) tiang net kiri, 2) tiang net kanan, 3) ujung service line kiri, 4) ujung service line kanan. Garis biru adalah lapangan hasil kalibrasi.</p>
   <div class="btns">
     <button id="btnOk" class="primary" disabled>Garis Cocok</button>
     <button id="btnNo" class="warn" disabled>Belum Cocok</button>
@@ -109,7 +109,8 @@ pre{background:#050709;border:1px solid var(--line);border-radius:10px;padding:1
 
   // ---------- Ukuran lapangan tenis standar (meter) ----------
   const W = 10.97, L = 23.77, SING = 1.37, NET = 11.885, SVC = 6.40, CX = W / 2;
-  const WORLD = [[0, 0], [W, 0], [W, L], [0, L]]; // urutan: jauh kiri, jauh kanan, dekat kanan, dekat kiri
+  // Urutan titik yang diketuk: net kiri, net kanan, service kiri, service kanan (semua terlihat di video)
+  const WORLD = [[0, NET], [W, NET], [SING, NET + SVC], [W - SING, NET + SVC]];
   const LINES = [
     [[0,0],[W,0]], [[W,0],[W,L]], [[W,L],[0,L]], [[0,L],[0,0]],           // garis double
     [[SING,0],[SING,L]], [[W-SING,0],[W-SING,L]],                          // garis single samping
@@ -347,7 +348,7 @@ pre{background:#050709;border:1px solid var(--line);border-radius:10px;padding:1
   }
 
   // ---------- Klik untuk menandai sudut ----------
-  const STEPS = ['Ketuk pojok JAUH KIRI lapangan (sudut atas kiri).', 'Ketuk pojok JAUH KANAN lapangan (sudut atas kanan).', 'Ketuk pojok DEKAT KANAN lapangan (sudut bawah kanan).', 'Ketuk pojok DEKAT KIRI lapangan (sudut bawah kiri).'];
+  const STEPS = ['Ketuk TIANG NET KIRI (pertemuan net dengan garis samping kiri).', 'Ketuk TIANG NET KANAN (pertemuan net dengan garis samping kanan).', 'Ketuk UJUNG SERVICE LINE KIRI (garis service dekat kamera, sisi kiri).', 'Ketuk UJUNG SERVICE LINE KANAN (garis service dekat kamera, sisi kanan).'];
   function updateStep() {
     if (!curId) { $('step').textContent = 'Pilih video dulu.'; return; }
     if (pts.length < 4) $('step').textContent = `Titik ${pts.length + 1} dari 4. ${STEPS[pts.length]}`;

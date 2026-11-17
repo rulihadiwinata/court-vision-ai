@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#07090b">
+<title>COURT VISION AI — Court Calibration</title>
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#07090b; --card:#12161a; --line:#222a31; --text:#e8f0ea; --muted:#8a98a0;
+  --lime:#c6ff3d; --teal:#00e5d4; --warn:#ffb84d; --fail:#ff5d6c; --grey:#6b7780;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.45;padding:16px}
+header{margin-bottom:14px}
+.brand{font-weight:800;letter-spacing:.12em;color:var(--lime);font-size:20px}
+.sub{color:var(--teal);font-size:12px;letter-spacing:.08em;text-transform:uppercase}
+h2{font-size:15px;margin:0 0 10px;color:var(--teal);letter-spacing:.04em}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:14px}
+.btns{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.btns3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px}
+button,.btn{background:transparent;color:var(--lime);border:1px solid var(--lime);border-radius:10px;padding:11px 6px;font-size:13px;font-weight:600;cursor:pointer;min-height:44px;text-align:center;display:flex;align-items:center;justify-content:center}
+button.primary,.btn.primary{background:var(--lime);color:#06100a}
+button.warn{border-color:var(--warn);color:var(--warn)}
+button.danger{border-color:var(--fail);color:var(--fail)}
+button:disabled{opacity:.35}
+select{width:100%;background:#0b0f12;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px;font-size:14px;min-height:44px}
+input[type=range]{width:100%;accent-color:var(--lime);margin:8px 0}
+.note{font-size:12px;color:var(--muted);margin:8px 0}
+.step{font-size:14px;color:var(--teal);margin:6px 0 10px;min-height:20px}
+.msg{font-size:13px;color:var(--teal);min-height:18px;margin-top:8px}
+canvas{width:100%;height:auto;display:block;background:#000;border-radius:10px;border:1px solid var(--line);touch-action:manipulation}
+#map{background:#0c2118}
+.row{display:flex;justify-content:space-between;gap:8px;font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+.check{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px}
+.check:last-child{border-bottom:none}
+.badge{font-size:11px;font-weight:700;padding:3px 8px;border-radius:999px;white-space:nowrap}
+.b-pass{background:rgba(198,255,61,.12);color:var(--lime)}
+.b-warn{background:rgba(255,184,77,.12);color:var(--warn)}
+.b-fail{background:rgba(255,93,108,.12);color:var(--fail)}
+.b-none{background:rgba(107,119,128,.15);color:var(--grey)}
+pre{background:#050709;border:1px solid var(--line);border-radius:10px;padding:10px;font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:260px;overflow:auto;color:#cfd8d2;margin:0}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">COURT VISION AI</div>
+  <div class="sub">Court Detection · Phase 3</div>
+</header>
+
+<section class="panel">
+  <h2>1. Pilih Video</h2>
+  <select id="vidSel"><option value="">— pilih dari pustaka —</option></select>
+  <div class="btns" style="margin-top:8px">
+    <label class="btn primary" for="fileIn">Upload Video Baru</label>
+    <button id="btnSaveFrame" disabled>Lewati ke Frame</button>
+  </div>
+  <input type="file" id="fileIn" accept="video/*" hidden>
+  <video id="vid" playsinline muted preload="auto" style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px"></video>
+  <input type="range" id="seek" min="0" max="0" step="0.001" value="0" disabled>
+  <div class="row"><span id="time">00:00.00 / 00:00.00</span><span id="cur">Belum ada video</span></div>
+  <div class="btns3">
+    <button id="bPrev" disabled>◀ Frame</button>
+    <button id="bNext" disabled>Frame ▶</button>
+    <button id="bFwd5" disabled>+5s</button>
+  </div>
+  <p class="note">Pilih frame di mana lapangan terlihat jelas dan tidak tertutup pemain.</p>
+  <div class="msg" id="msg"></div>
+</section>
+
+<section class="panel">
+  <h2>2. Kalibrasi 4 Sudut</h2>
+  <div class="step" id="step">Pilih video dulu.</div>
+  <canvas id="cv" width="640" height="360"></canvas>
+  <div class="btns" style="margin-top:10px">
+    <button id="btnUndo" disabled>Undo Titik</button>
+    <button id="btnReset" class="danger" disabled>Ulangi Semua</button>
+  </div>
+  <p class="note">Urutan ketuk: 1) pojok jauh kiri, 2) pojok jauh kanan, 3) pojok dekat kanan, 4) pojok dekat kiri. Garis biru adalah lapangan hasil kalibrasi.</p>
+  <div class="btns">
+    <button id="btnOk" class="primary" disabled>Garis Cocok</button>
+    <button id="btnNo" class="warn" disabled>Belum Cocok</button>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>3. Peta Lapangan 2D (tampak atas)</h2>
+  <canvas id="map" width="300" height="660"></canvas>
+  <p class="note">Ini lapangan standar tampak atas: double 10,97 m × 23,77 m. Titik bola nanti akan dipetakan ke sini (Phase 5).</p>
+</section>
+
+<section class="panel">
+  <h2>4. Status Phase 3</h2>
+  <div id="checklist"></div>
+  <h2 style="margin-top:14px">Laporan</h2>
+  <pre id="report">Belum ada laporan.</pre>
+  <button id="btnCopy" style="width:100%;margin-top:8px">Salin Laporan</button>
+</section>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const setMsg = t => { $('msg').textContent = t; };
+  const FRAME = 1 / 30;
+
+  // ---------- Ukuran lapangan tenis standar (meter) ----------
+  const W = 10.97, L = 23.77, SING = 1.37, NET = 11.885, SVC = 6.40, CX = W / 2;
+  const WORLD = [[0, 0], [W, 0], [W, L], [0, L]]; // urutan: jauh kiri, jauh kanan, dekat kanan, dekat kiri
+  const LINES = [
+    [[0,0],[W,0]], [[W,0],[W,L]], [[W,L],[0,L]], [[0,L],[0,0]],           // garis double
+    [[SING,0],[SING,L]], [[W-SING,0],[W-SING,L]],                          // garis single samping
+    [[SING,NET-SVC],[W-SING,NET-SVC]], [[SING,NET+SVC],[W-SING,NET+SVC]], // service line
+    [[CX,NET-SVC],[CX,NET+SVC]],                                            // center service
+    [[0,NET],[W,NET]]                                                       // net
+  ];
+
+  // ---------- Matematika homografi (transformasi perspektif) ----------
+  function solve(A, b) {
+    const n = b.length;
+    const M = A.map((r, i) => [...r, b[i]]);
+    for (let c = 0; c < n; c++) {
+      let p = c;
+      for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+      [M[c], M[p]] = [M[p], M[c]];
+      for (let r = 0; r < n; r++) {
+        if (r === c) continue;
+        const f = M[r][c] / M[c][c];
+        for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k];
+      }
+    }
+    return M.map((r, i) => r[n] / r[i]);
+  }
+  // Mencari matriks 3x3 H sehingga src[i] -> dst[i] untuk 4 pasang titik
+  function homography(src, dst) {
+    const A = [], b = [];
+    for (let i = 0; i < 4; i++) {
+      const [x, y] = src[i], [u, v] = dst[i];
+      A.push([x, y, 1, 0, 0, 0, -x * u, -y * u]); b.push(u);
+      A.push([0, 0, 0, x, y, 1, -x * v, -y * v]); b.push(v);
+    }
+    const h = solve(A, b);
+    return [[h[0], h[1], h[2]], [h[3], h[4], h[5]], [h[6], h[7], 1]];
+  }
+  function proj(H, x, y) {
+    const d = H[2][0] * x + H[2][1] * y + H[2][2];
+    return [(H[0][0] * x + H[0][1] * y + H[0][2]) / d, (H[1][0] * x + H[1][1] * y + H[1][2]) / d];
+  }
+
+  // ---------- State ----------
+  const vid = $('vid'), cv = $('cv'), ctx = cv.getContext('2d');
+  let db = null, db2 = null, curId = null, curName = '', curUrl = null;
+  let pts = [];          // titik di koordinat piksel video
+  let Hw2i = null;       // dunia (meter) -> gambar (piksel)
+  let Hi2w = null;       // gambar -> dunia (meter)
+  let calibLoaded = false;
+  const flags = { calib: null, overlay: null, map: null, persist: null, auto: null };
+  const CHECK = [
+    ['calib',   'Kalibrasi 4 sudut lapangan'],
+    ['overlay', 'Garis lapangan cocok dengan video (konfirmasi Anda)'],
+    ['map',     'Peta lapangan 2D tampil'],
+    ['persist', 'Kalibrasi tersimpan dan terbaca ulang'],
+    ['auto',    'Deteksi garis otomatis (tahap 3B, belum dikerjakan)']
+  ];
+
+  // ---------- IndexedDB: pustaka video (sama dengan video.html) ----------
+  function openLib() {
+    return new Promise((res, rej) => {
+      const r = indexedDB.open('court_vision', 1);
+      r.onupgradeneeded = () => { r.result.createObjectStore('meta', { keyPath: 'id' }); r.result.createObjectStore('blobs', { keyPath: 'id' }); };
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    });
+  }
+  // Penyimpanan kalibrasi dipisah di database sendiri agar tidak mengubah versi database pustaka
+  function openCalib() {
+    return new Promise((res, rej) => {
+      const r = indexedDB.open('court_vision_calib', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('calib', { keyPath: 'videoId' });
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    });
+  }
+  const req2p = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+  const txDone = t => new Promise((res, rej) => { t.oncomplete = res; t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); });
+
+  function probe(blob) {
+    return new Promise(resolve => {
+      const url = URL.createObjectURL(blob);
+      const v = document.createElement('video');
+      v.preload = 'metadata'; v.muted = true; v.playsInline = true;
+      let done = false;
+      const finish = () => { if (done) return; done = true; const o = { duration: isFinite(v.duration) ? v.duration : 0, width: v.videoWidth, height: v.videoHeight }; URL.revokeObjectURL(url); resolve(o); };
+      v.onloadedmetadata = () => {
+        if (v.duration === Infinity) { v.ontimeupdate = () => { v.ontimeupdate = null; v.currentTime = 0; finish(); }; v.currentTime = 1e101; }
+        else finish();
+      };
+      v.onerror = () => { if (!done) { done = true; URL.revokeObjectURL(url); resolve({ duration:0, width:0, height:0 }); } };
+      v.src = url;
+    });
+  }
+  async function saveVideo(blob, name) {
+    const meta = await probe(blob);
+    const id = 'v' + Date.now() + Math.random().toString(36).slice(2, 6);
+    const info = { id, name, type: blob.type, size: blob.size, created: Date.now(), ...meta };
+    const t = db.transaction(['meta', 'blobs'], 'readwrite');
+    t.objectStore('meta').put(info); t.objectStore('blobs').put({ id, blob });
+    await txDone(t);
+    return id;
+  }
+  async function refreshLib(selectId) {
+    const arr = await req2p(db.transaction(['meta'], 'readonly').objectStore('meta').getAll());
+    arr.sort((a, b) => b.created - a.created);
+    $('vidSel').innerHTML = '<option value="">— pilih dari pustaka —</option>' +
+      arr.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('');
+    if (selectId) $('vidSel').value = selectId;
+  }
+  async function getBlob(id) {
+    const r = await req2p(db.transaction(['blobs'], 'readonly').objectStore('blobs').get(id));
+    return r ? r.blob : null;
+  }
+
+  // ---------- Simpan & muat kalibrasi ----------
+  async function saveCalib() {
+    if (!curId || pts.length !== 4) return;
+    const t = db2.transaction(['calib'], 'readwrite');
+    t.objectStore('calib').put({ videoId: curId, pts, confirmed: flags.overlay === 'PASS', savedAt: Date.now() });
+    await txDone(t);
+  }
+  async function loadCalib(id) {
+    const r = await req2p(db2.transaction(['calib'], 'readonly').objectStore('calib').get(id));
+    return r || null;
+  }
+
+  // ---------- Pemuatan video ----------
+  async function loadVideo(id) {
+    const blob = await getBlob(id);
+    if (!blob) { setMsg('Video tidak ditemukan.'); return; }
+    if (curUrl) URL.revokeObjectURL(curUrl);
+    curUrl = URL.createObjectURL(blob);
+    curId = id;
+    curName = $('vidSel').options[$('vidSel').selectedIndex]?.text || 'Video';
+    pts = []; Hw2i = null; Hi2w = null;
+    flags.calib = null; flags.overlay = null; flags.map = null; flags.persist = null;
+    vid.src = curUrl;
+    vid.load();
+    $('cur').textContent = 'Memuat video...';
+    setEnabled(true);
+  }
+
+  vid.onloadedmetadata = () => {
+    const ready = () => {
+      cv.width = vid.videoWidth || 640;
+      cv.height = vid.videoHeight || 360;
+      $('seek').max = isFinite(vid.duration) ? vid.duration : 0;
+      $('cur').textContent = curName;
+      vid.currentTime = Math.min(0.5, (isFinite(vid.duration) ? vid.duration : 0.5));
+      loadSavedCalibration();
+    };
+    if (vid.duration === Infinity) {
+      vid.ontimeupdate = () => { vid.ontimeupdate = onTimeUpdate; vid.currentTime = 0; ready(); };
+      vid.currentTime = 1e101;
+    } else ready();
+  };
+  vid.onseeked = () => { redraw(); updateTime(); };
+  function onTimeUpdate() { updateTime(); }
+  vid.ontimeupdate = onTimeUpdate;
+
+  function updateTime() {
+    const d = isFinite(vid.duration) ? vid.duration : 0;
+    const f = t => { t = t || 0; return `${String(Math.floor(t / 60)).padStart(2,'0')}:${String(Math.floor(t % 60)).padStart(2,'0')}.${String(Math.floor((t * 100) % 100)).padStart(2,'0')}`; };
+    $('time').textContent = `${f(vid.currentTime)} / ${f(d)}`;
+    $('seek').value = vid.currentTime;
+  }
+
+  function setEnabled(on) {
+    ['seek','bPrev','bNext','bFwd5','btnSaveFrame','btnUndo','btnReset'].forEach(k => $(k).disabled = !on);
+    updateButtons();
+  }
+  function updateButtons() {
+    const hasPts = pts.length > 0;
+    $('btnUndo').disabled = !hasPts || !curId;
+    $('btnReset').disabled = !hasPts || !curId;
+    $('btnOk').disabled = !Hw2i;
+    $('btnNo').disabled = !Hw2i;
+  }
+
+  $('vidSel').onchange = async () => { const id = $('vidSel').value; if (id) await loadVideo(id); };
+  $('seek').oninput = () => { vid.currentTime = +$('seek').value; };
+  $('bPrev').onclick = () => { vid.pause(); vid.currentTime = Math.max(0, vid.currentTime - FRAME); };
+  $('bNext').onclick = () => { vid.pause(); vid.currentTime = Math.min(vid.duration || 0, vid.currentTime + FRAME); };
+  $('bFwd5').onclick = () => { vid.currentTime = Math.min(vid.duration || 0, vid.currentTime + 5); };
+  $('btnSaveFrame').onclick = () => { redraw(); setMsg('Frame ini dipakai untuk kalibrasi.'); };
+
+  $('fileIn').onchange = async e => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f || !f.type.startsWith('video/')) { setMsg('File yang dipilih bukan video.'); return; }
+    setMsg('Menyimpan video...');
+    try {
+      const id = await saveVideo(f, f.name);
+      await refreshLib(id);
+      await loadVideo(id);
+      setMsg('Video tersimpan di pustaka dan siap dikalibrasi.');
+    } catch (err) { setMsg('Gagal menyimpan video: ' + err.message); }
+  };
+
+  // ---------- Gambar frame + overlay ----------
+  function redraw() {
+    if (!vid.videoWidth) return;
+    ctx.drawImage(vid, 0, 0, cv.width, cv.height);
+    drawOverlay();
+  }
+
+  function drawOverlay() {
+    const lw = Math.max(2, cv.width / 480);
+    if (pts.length > 1) {
+      ctx.strokeStyle = 'rgba(198,255,61,.7)';
+      ctx.lineWidth = lw;
+      ctx.beginPath();
+      pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+      if (pts.length === 4) ctx.closePath();
+      ctx.stroke();
+    }
+    if (Hw2i) {
+      ctx.strokeStyle = '#00e5d4';
+      ctx.lineWidth = lw;
+      LINES.forEach(([[x0, y0], [x1, y1]]) => {
+        ctx.beginPath();
+        for (let i = 0; i <= 40; i++) {
+          const t = i / 40;
+          const [x, y] = proj(Hw2i, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
+          i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+        }
+        ctx.stroke();
+      });
+    }
+    pts.forEach(([x, y], i) => {
+      ctx.fillStyle = '#c6ff3d';
+      ctx.beginPath(); ctx.arc(x, y, lw * 3, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#000';
+      ctx.font = `bold ${lw * 5}px sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(String(i + 1), x, y);
+    });
+  }
+
+  // ---------- Klik untuk menandai sudut ----------
+  const STEPS = ['Ketuk pojok JAUH KIRI lapangan (sudut atas kiri).', 'Ketuk pojok JAUH KANAN lapangan (sudut atas kanan).', 'Ketuk pojok DEKAT KANAN lapangan (sudut bawah kanan).', 'Ketuk pojok DEKAT KIRI lapangan (sudut bawah kiri).'];
+  function updateStep() {
+    if (!curId) { $('step').textContent = 'Pilih video dulu.'; return; }
+    if (pts.length < 4) $('step').textContent = `Titik ${pts.length + 1} dari 4. ${STEPS[pts.length]}`;
+    else $('step').textContent = 'Kalibrasi selesai. Periksa garis biru di video.';
+  }
+
+  cv.addEventListener('click', e => {
+    if (!curId || !vid.videoWidth) return;
+    if (pts.length >= 4) { setMsg('Sudah 4 titik. Tekan "Ulangi Semua" untuk mengganti.'); return; }
+    const r = cv.getBoundingClientRect();
+    const x = (e.clientX - r.left) * cv.width / r.width;
+    const y = (e.clientY - r.top) * cv.height / r.height;
+    pts.push([x, y]);
+    if (pts.length === 4) computeCalibration();
+    redraw(); updateStep(); updateButtons(); renderChecklist();
+  });
+
+  function computeCalibration() {
+    Hw2i = homography(WORLD, pts);
+    Hi2w = homography(pts, WORLD);
+    flags.calib = 'PASS';
+    flags.overlay = null;
+    drawMap();
+    flags.map = 'PASS';
+    setMsg('Kalibrasi dihitung. Periksa apakah garis biru pas dengan lapangan.');
+    saveCalib();
+  }
+
+  $('btnUndo').onclick = () => {
+    pts.pop(); Hw2i = null; Hi2w = null; flags.calib = null; flags.overlay = null;
+    redraw(); updateStep(); updateButtons(); renderChecklist();
+  };
+  $('btnReset').onclick = async () => {
+    pts = []; Hw2i = null; Hi2w = null; flags.calib = null; flags.overlay = null; flags.map = null;
+    if (db2 && curId) { const t = db2.transaction(['calib'], 'readwrite'); t.objectStore('calib').delete(curId); await txDone(t).catch(() => {}); }
+    redraw(); updateStep(); updateButtons(); drawMap(); renderChecklist();
+    setMsg('Kalibrasi dihapus. Ketuk 4 sudut lagi.');
+  };
+  $('btnOk').onclick = () => {
+    if (!Hw2i) return;
+    flags.overlay = 'PASS';
+    saveCalib();
+    setMsg('Garis dikonfirmasi cocok dan disimpan.');
+    renderChecklist();
+  };
+  $('btnNo').onclick = () => {
+    if (!Hw2i) return;
+    flags.overlay = 'WARN';
+    setMsg('Coba ulangi kalibrasi di frame lain, atau ketuk ulang sudut dengan lebih teliti.');
+    renderChecklist();
+  };
+
+  async function loadSavedCalibration() {
+    const c = await loadCalib(curId).catch(() => null);
+    if (c && c.pts && c.pts.length === 4) {
+      pts = c.pts;
+      computeCalibration();
+      flags.persist = 'PASS';
+      flags.overlay = c.confirmed ? 'PASS' : null;
+      setMsg('Kalibrasi tersimpan dimuat ulang.');
+    } else {
+      pts = []; Hw2i = null; Hi2w = null; flags.calib = null; flags.map = null; flags.overlay = null;
+    }
+    redraw(); updateStep(); updateButtons(); renderChecklist();
+  }
+
+  // ---------- Peta lapangan 2D ----------
+  function drawMap() {
+    const c = $('map'), g = c.getContext('2d');
+    const w = c.width, h = c.height, pad = 24;
+    g.fillStyle = '#0c2118'; g.fillRect(0, 0, w, h);
+    const s = Math.min((w - 2 * pad) / W, (h - 2 * pad) / L);
+    const ox = (w - W * s) / 2, oy = (h - L * s) / 2;
+    const T = (x, y) => [ox + x * s, oy + y * s];
+    g.strokeStyle = '#e8f0ea'; g.lineWidth = 2;
+    LINES.forEach(([[x0, y0], [x1, y1]]) => {
+      const a = T(x0, y0), b = T(x1, y1);
+      g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
+    });
+    g.fillStyle = '#8a98a0'; g.font = '12px sans-serif'; g.textAlign = 'left';
+    g.fillText('Sisi jauh kamera', ox, oy - 8);
+    g.fillText('Sisi dekat kamera', ox, oy + L * s + 16);
+  }
+
+  // ---------- Checklist & laporan ----------
+  function renderChecklist() {
+    buildReport();
+    $('checklist').innerHTML = CHECK.map(([k, label]) => {
+      const s = flags[k];
+      const b = s === 'PASS' ? ['b-pass','PASS'] : s === 'WARN' ? ['b-warn','WARNING'] : s === 'FAIL' ? ['b-fail','FAILED'] : ['b-none','NOT RUN'];
+      return `<div class="check"><span>${label}</span><span class="badge ${b[0]}">${b[1]}</span></div>`;
+    }).join('');
+  }
+  const LBL = { PASS: 'PASS', WARN: 'WARNING', FAIL: 'FAILED' };
+  function buildReport() {
+    const lines = [
+      'LAPORAN PHASE 3 — COURT CALIBRATION',
+      'Waktu: ' + new Date().toLocaleString('id-ID'),
+      'Perangkat: ' + navigator.userAgent,
+      'Video: ' + (curName || '-'),
+      'Titik kalibrasi: ' + pts.map(p => `(${Math.round(p[0])},${Math.round(p[1])})`).join(' ') || 'belum ada',
+      ''
+    ];
+    CHECK.forEach(([k, label]) => lines.push(`[${LBL[flags[k]] || 'NOT RUN'}] ${label}`));
+    lines.push('', 'Keterangan: NOT RUN berarti tes belum dilakukan, bukan gagal.');
+    $('report').textContent = lines.join('\n');
+  }
+  $('btnCopy').onclick = async () => {
+    try { await navigator.clipboard.writeText($('report').textContent); setMsg('Laporan disalin.'); }
+    catch (e) { setMsg('Gagal menyalin. Pilih teks laporan secara manual.'); }
+  };
+
+  // ---------- Start ----------
+  (async () => {
+    try {
+      db = await openLib();
+      db2 = await openCalib();
+      await refreshLib();
+    } catch (e) {
+      setMsg('Database gagal dibuka: ' + e.message);
+    }
+    drawMap();
+    renderChecklist();
+    updateStep();
+  })();
+})();
+</script>
+</body>
+</html>

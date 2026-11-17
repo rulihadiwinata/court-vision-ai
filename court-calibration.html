@@ -33,8 +33,7 @@ input[type=range]{width:100%;accent-color:var(--lime);margin:8px 0}
 .step{font-size:14px;color:var(--teal);margin:6px 0 10px;min-height:20px}
 .msg{font-size:13px;color:var(--teal);min-height:18px;margin-top:8px}
 canvas{width:100%;height:auto;display:block;background:#000;border-radius:10px;border:1px solid var(--line);touch-action:none}
-.wrap{position:relative}
-#loupe{position:absolute;top:8px;right:8px;width:120px;height:120px;border:2px solid var(--lime);border-radius:50%;display:none;background:#000;pointer-events:none}
+
 #map{background:#0c2118}
 .row{display:flex;justify-content:space-between;gap:8px;font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
 .check{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px}
@@ -78,13 +77,12 @@ pre{background:#050709;border:1px solid var(--line);border-radius:10px;padding:1
   <div class="step" id="step">Pilih video dulu.</div>
   <div class="wrap">
     <canvas id="cv" width="640" height="360"></canvas>
-    <canvas id="loupe" width="120" height="120"></canvas>
   </div>
   <div class="btns" style="margin-top:10px">
     <button id="btnUndo" disabled>Undo Titik</button>
     <button id="btnReset" class="danger" disabled>Ulangi Semua</button>
   </div>
-  <p class="note">Ketuk layar untuk menaruh titik, lalu <b>geser titik</b> dengan jari untuk menyesuaikan. Garis biru ikut bergerak. Urutan titik: 1) tiang net kiri, 2) tiang net kanan, 3) ujung service line kiri, 4) ujung service line kanan. Lingkaran kecil di pojok menampilkan area di bawah jari.</p>
+  <p class="note">Ketuk layar untuk menaruh titik, lalu <b>geser titik</b> dengan jari untuk menyesuaikan. Garis biru ikut bergerak. Urutan titik: 1) tiang net kiri, 2) tiang net kanan, 3) ujung service line kiri, 4) ujung service line kanan.</p>
   <div class="btns">
     <button id="btnOk" class="primary" disabled>Garis Cocok</button>
     <button id="btnNo" class="warn" disabled>Belum Cocok</button>
@@ -362,7 +360,6 @@ pre{background:#050709;border:1px solid var(--line);border-radius:10px;padding:1
 
   // ---------- Titik yang bisa digeser ----------
   let dragIdx = -1;
-  const loupe = $('loupe'), lg = loupe.getContext('2d');
 
   function canvasPoint(e) {
     const r = cv.getBoundingClientRect();
@@ -376,16 +373,6 @@ pre{background:#050709;border:1px solid var(--line);border-radius:10px;padding:1
       if (d < rad && d < bd) { bd = d; best = i; }
     });
     return best;
-  }
-  function drawLoupe(x, y) {
-    if (!vid.videoWidth) return;
-    const src = 40; // area sumber dalam piksel video
-    loupe.style.display = 'block';
-    lg.fillStyle = '#000';
-    lg.fillRect(0, 0, 120, 120);
-    lg.drawImage(cv, x - src / 2, y - src / 2, src, src, 0, 0, 120, 120);
-    lg.strokeStyle = '#c6ff3d'; lg.lineWidth = 1;
-    lg.beginPath(); lg.moveTo(60, 0); lg.lineTo(60, 120); lg.moveTo(0, 60); lg.lineTo(120, 60); lg.stroke();
   }
   function refreshAll(full = true) {
     redraw(); updateStep(); updateButtons();
@@ -408,7 +395,6 @@ pre{background:#050709;border:1px solid var(--line);border-radius:10px;padding:1
       setMsg('Sudah 4 titik. Geser titik yang ada, atau tekan "Ulangi Semua".');
       return;
     }
-    drawLoupe(pts[dragIdx][0], pts[dragIdx][1]);
     refreshAll();
   });
 
@@ -422,14 +408,12 @@ pre{background:#050709;border:1px solid var(--line);border-radius:10px;padding:1
       Hi2w = homography(pts, WORLD);
       flags.calib = 'PASS';
     }
-    drawLoupe(x, y);
     refreshAll(false);
   });
 
   function endDrag() {
     if (dragIdx < 0) return;
     dragIdx = -1;
-    loupe.style.display = 'none';
     if (pts.length === 4) {
       flags.overlay = null; // setelah digeser, konfirmasi harus diulang
       flags.map = 'PASS';

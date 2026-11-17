@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#07090b">
+<title>COURT VISION AI — Line Detection</title>
+<script async src="https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js"></script>
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#07090b; --card:#12161a; --line:#222a31; --text:#e8f0ea; --muted:#8a98a0;
+  --lime:#c6ff3d; --teal:#00e5d4; --warn:#ffb84d; --fail:#ff5d6c; --grey:#6b7780;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.45;padding:16px}
+header{margin-bottom:14px}
+.brand{font-weight:800;letter-spacing:.12em;color:var(--lime);font-size:20px}
+.sub{color:var(--teal);font-size:12px;letter-spacing:.08em;text-transform:uppercase}
+h2{font-size:15px;margin:0 0 10px;color:var(--teal);letter-spacing:.04em}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:14px}
+.btns{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+button{background:transparent;color:var(--lime);border:1px solid var(--lime);border-radius:10px;padding:11px 6px;font-size:13px;font-weight:600;cursor:pointer;min-height:44px}
+button.primary{background:var(--lime);color:#06100a}
+button.warn{border-color:var(--warn);color:var(--warn)}
+button:disabled{opacity:.35}
+select{width:100%;background:#0b0f12;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px;font-size:14px;min-height:44px}
+input[type=range]{width:100%;accent-color:var(--lime);margin:6px 0}
+canvas{width:100%;height:auto;display:block;background:#000;border-radius:10px;border:1px solid var(--line);margin-top:10px}
+.note{font-size:12px;color:var(--muted);margin:8px 0}
+.msg{font-size:13px;color:var(--teal);min-height:18px;margin-top:8px}
+.legend{display:flex;gap:12px;font-size:12px;margin-top:6px}
+.dot{display:inline-block;width:14px;height:4px;vertical-align:middle;margin-right:4px}
+.check{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px}
+.check:last-child{border-bottom:none}
+.badge{font-size:11px;font-weight:700;padding:3px 8px;border-radius:999px;white-space:nowrap}
+.b-pass{background:rgba(198,255,61,.12);color:var(--lime)}
+.b-warn{background:rgba(255,184,77,.12);color:var(--warn)}
+.b-fail{background:rgba(255,93,108,.12);color:var(--fail)}
+.b-none{background:rgba(107,119,128,.15);color:var(--grey)}
+pre{background:#050709;border:1px solid var(--line);border-radius:10px;padding:10px;font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:260px;overflow:auto;color:#cfd8d2;margin:0}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">COURT VISION AI</div>
+  <div class="sub">Court Detection · Phase 3B-1</div>
+</header>
+
+<section class="panel">
+  <h2>1. Pilih Video & Frame</h2>
+  <select id="vidSel"><option value="">— pilih dari pustaka —</option></select>
+  <input type="range" id="seek" min="0" max="0" step="0.01" value="0" disabled>
+  <div class="note" id="info">Memuat OpenCV...</div>
+  <canvas id="cv" width="640" height="360"></canvas>
+  <div class="legend">
+    <span><span class="dot" style="background:#ffe600"></span>hampir horizontal</span>
+    <span><span class="dot" style="background:#ff4dd2"></span>hampir vertikal</span>
+  </div>
+  <video id="vid" playsinline muted preload="auto" style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px"></video>
+  <div class="msg" id="msg"></div>
+</section>
+
+<section class="panel">
+  <h2>2. Deteksi Garis Putih</h2>
+  <label class="note">Ambang kecerahan: <span id="thrVal">190</span> (naikkan kalau terlalu banyak garis palsu, turunkan kalau garis lapangan tidak terdeteksi)</label>
+  <input type="range" id="thr" min="120" max="250" value="190">
+  <div class="btns">
+    <button id="btnDetect" class="primary" disabled>Deteksi Garis</button>
+    <button id="btnClear" disabled>Bersihkan Gambar</button>
+  </div>
+  <div class="btns">
+    <button id="btnOk" disabled>Deteksi Sudah Bagus</button>
+    <button id="btnBad" class="warn" disabled>Kurang Bagus</button>
+  </div>
+  <p class="note">Nilai hasil deteksi dengan mata Anda. Garis yang sebenarnya ada di lapangan (net, service line, garis samping) harus berwarna. Garis dari pagar, bangku, atau lampu sebaiknya tidak ikut.</p>
+</section>
+
+<section class="panel">
+  <h2>3. Status Phase 3B</h2>
+  <div id="checklist"></div>
+  <h2 style="margin-top:14px">Laporan</h2>
+  <pre id="report">Belum ada laporan.</pre>
+  <button id="btnCopy" style="width:100%;margin-top:8px">Salin Laporan</button>
+</section>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const setMsg = t => { $('msg').textContent = t; };
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  const flags = { cv: null, detect: null, judge: null, auto: null };
+  const CHECK = [
+    ['cv',     'OpenCV.js termuat di HP'],
+    ['detect', 'Deteksi garis berjalan dan menemukan garis'],
+    ['judge',  'Hasil deteksi dinilai (konfirmasi Anda)'],
+    ['auto',   'Kalibrasi otomatis dari garis (tahap 3B-2, belum dikerjakan)']
+  ];
+  let db = null, curId = null, curName = '', curUrl = null, cvReady = false, lastCount = null;
+  const vid = $('vid'), cv_ = $('cv'), ctx = cv_.getContext('2d');
+
+  // ---------- Pustaka video (IndexedDB yang sama dengan halaman lain) ----------
+  function openLib() {
+    return new Promise((res, rej) => {
+      const r = indexedDB.open('court_vision', 1);
+      r.onupgradeneeded = () => { r.result.createObjectStore('meta', { keyPath: 'id' }); r.result.createObjectStore('blobs', { keyPath: 'id' }); };
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    });
+  }
+  const req2p = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+  async function refreshLib(selectId) {
+    const arr = await req2p(db.transaction(['meta'], 'readonly').objectStore('meta').getAll());
+    arr.sort((a, b) => b.created - a.created);
+    $('vidSel').innerHTML = '<option value="">— pilih dari pustaka —</option>' +
+      arr.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('');
+    if (selectId) $('vidSel').value = selectId;
+  }
+  async function getBlob(id) {
+    const r = await req2p(db.transaction(['blobs'], 'readonly').objectStore('blobs').get(id));
+    return r ? r.blob : null;
+  }
+
+  // ---------- Memuat video ----------
+  async function loadVideo(id) {
+    const blob = await getBlob(id);
+    if (!blob) { setMsg('Video tidak ditemukan.'); return; }
+    if (curUrl) URL.revokeObjectURL(curUrl);
+    curUrl = URL.createObjectURL(blob);
+    curId = id;
+    curName = $('vidSel').options[$('vidSel').selectedIndex]?.text || 'Video';
+    vid.src = curUrl;
+    vid.load();
+    lastCount = null;
+    flags.detect = null; flags.judge = null;
+    renderChecklist();
+  }
+  vid.onloadedmetadata = () => {
+    const ready = () => {
+      cv_.width = vid.videoWidth || 640;
+      cv_.height = vid.videoHeight || 360;
+      $('seek').max = isFinite(vid.duration) ? vid.duration : 0;
+      $('seek').disabled = false;
+      vid.currentTime = Math.min(0.5, isFinite(vid.duration) ? vid.duration : 0.5);
+      enableButtons();
+    };
+    if (vid.duration === Infinity) {
+      vid.ontimeupdate = () => { vid.ontimeupdate = null; vid.currentTime = 0; ready(); };
+      vid.currentTime = 1e101;
+    } else ready();
+  };
+  vid.onseeked = () => drawFrame();
+  $('seek').oninput = () => { vid.currentTime = +$('seek').value; };
+  $('vidSel').onchange = async () => { const id = $('vidSel').value; if (id) await loadVideo(id); };
+
+  function drawFrame() {
+    if (!vid.videoWidth) return;
+    ctx.drawImage(vid, 0, 0, cv_.width, cv_.height);
+  }
+
+  function enableButtons() {
+    const ok = cvReady && !!curId;
+    $('btnDetect').disabled = !ok;
+    $('btnClear').disabled = !curId || lastCount === null;
+    $('btnOk').disabled = lastCount === null;
+    $('btnBad').disabled = lastCount === null;
+    $('info').textContent = (curId ? `Video: ${curName}. ` : '') + (cvReady ? 'OpenCV siap.' : 'Menunggu OpenCV...');
+  }
+
+  // ---------- OpenCV ----------
+  function onCvReady() {
+    if (cvReady) return;
+    cvReady = true;
+    flags.cv = 'PASS';
+    enableButtons();
+    renderChecklist();
+  }
+  (function waitCv() {
+    const t0 = Date.now();
+    let thenUsed = false;
+    const iv = setInterval(() => {
+      if (typeof cv !== 'undefined' && cv && cv.Mat) { clearInterval(iv); onCvReady(); }
+      else if (typeof cv !== 'undefined' && cv && typeof cv.then === 'function' && !thenUsed) {
+        thenUsed = true;
+        cv.then(m => { window.cv = m; clearInterval(iv); onCvReady(); });
+      }
+      else if (Date.now() - t0 > 40000) {
+        clearInterval(iv);
+        flags.cv = 'FAIL';
+        $('info').textContent = 'OpenCV gagal dimuat. Cek koneksi internet lalu muat ulang halaman.';
+        renderChecklist();
+      }
+    }, 300);
+  })();
+
+  // ---------- Deteksi garis ----------
+  $('thr').oninput = () => { $('thrVal').textContent = $('thr').value; };
+
+  function detectLines() {
+    if (!cvReady || !curId || !vid.videoWidth) return;
+    drawFrame();
+    const thr = +$('thr').value;
+    let src, gray, blur, mask, edges, lines;
+    try {
+      src = cv.imread(cv_);
+      gray = new cv.Mat();
+      cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+      blur = new cv.Mat();
+      cv.GaussianBlur(gray, blur, new cv.Size(3, 3), 0);
+      mask = new cv.Mat();
+      cv.threshold(blur, mask, thr, 255, cv.THRESH_BINARY);     // ambil piksel yang cukup putih
+      edges = new cv.Mat();
+      cv.Canny(mask, edges, 50, 150);
+      lines = new cv.Mat();
+      const minLen = Math.max(40, cv_.width * 0.07);
+      cv.HoughLinesP(edges, lines, 1, Math.PI / 180, 45, minLen, 12);
+
+      drawFrame();
+      let hz = 0, vt = 0;
+      const found = [];
+      for (let i = 0; i < lines.rows; i++) {
+        const x1 = lines.data32S[i * 4], y1 = lines.data32S[i * 4 + 1];
+        const x2 = lines.data32S[i * 4 + 2], y2 = lines.data32S[i * 4 + 3];
+        const ang = Math.abs(Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI);
+        const horiz = ang < 25 || ang > 155;
+        if (horiz) hz++; else vt++;
+        ctx.strokeStyle = horiz ? '#ffe600' : '#ff4dd2';
+        ctx.lineWidth = Math.max(2, cv_.width / 320);
+        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+        found.push({ x1, y1, x2, y2, horiz });
+      }
+      lastCount = { total: lines.rows, horizontal: hz, vertical: vt, thr };
+      flags.detect = lines.rows > 0 ? 'PASS' : 'FAIL';
+      flags.judge = null;
+      setMsg(lines.rows > 0
+        ? `Terdeteksi ${lines.rows} garis (${hz} horizontal, ${vt} vertikal). Nilai hasilnya.`
+        : 'Tidak ada garis terdeteksi. Turunkan ambang kecerahan lalu coba lagi.');
+    } catch (e) {
+      flags.detect = 'FAIL';
+      setMsg('Deteksi gagal: ' + e.message);
+    } finally {
+      [src, gray, blur, mask, edges, lines].forEach(m => { if (m && m.delete) m.delete(); });
+    }
+    enableButtons();
+    renderChecklist();
+  }
+
+  $('btnDetect').onclick = detectLines;
+  $('btnClear').onclick = () => { drawFrame(); lastCount = null; flags.detect = null; flags.judge = null; setMsg('Gambar dibersihkan.'); enableButtons(); renderChecklist(); };
+  $('btnOk').onclick = () => { flags.judge = 'PASS'; setMsg('Deteksi dinilai bagus.'); renderChecklist(); };
+  $('btnBad').onclick = () => { flags.judge = 'WARN'; setMsg('Deteksi dinilai kurang bagus. Coba ubah ambang atau pilih frame lain.'); renderChecklist(); };
+
+  // ---------- Checklist & laporan ----------
+  function renderChecklist() {
+    buildReport();
+    $('checklist').innerHTML = CHECK.map(([k, label]) => {
+      const s = flags[k];
+      const b = s === 'PASS' ? ['b-pass','PASS'] : s === 'WARN' ? ['b-warn','WARNING'] : s === 'FAIL' ? ['b-fail','FAILED'] : ['b-none','NOT RUN'];
+      return `<div class="check"><span>${label}</span><span class="badge ${b[0]}">${b[1]}</span></div>`;
+    }).join('');
+  }
+  const LBL = { PASS: 'PASS', WARN: 'WARNING', FAIL: 'FAILED' };
+  function buildReport() {
+    const lines = [
+      'LAPORAN PHASE 3B-1 — DETEKSI GARIS',
+      'Waktu: ' + new Date().toLocaleString('id-ID'),
+      'Perangkat: ' + navigator.userAgent,
+      'Video: ' + (curName || '-'),
+      'Ambang kecerahan: ' + $('thr').value,
+      'Hasil deteksi: ' + (lastCount ? `${lastCount.total} garis (${lastCount.horizontal} horizontal, ${lastCount.vertical} vertikal)` : 'belum ada'),
+      ''
+    ];
+    CHECK.forEach(([k, label]) => lines.push(`[${LBL[flags[k]] || 'NOT RUN'}] ${label}`));
+    lines.push('', 'Keterangan: NOT RUN berarti tes belum dilakukan, bukan gagal.');
+    $('report').textContent = lines.join('\n');
+  }
+  $('btnCopy').onclick = async () => {
+    try { await navigator.clipboard.writeText($('report').textContent); setMsg('Laporan disalin.'); }
+    catch (e) { setMsg('Gagal menyalin. Pilih teks laporan secara manual.'); }
+  };
+
+  // ---------- Start ----------
+  (async () => {
+    try {
+      db = await openLib();
+      await refreshLib();
+    } catch (e) {
+      setMsg('Pustaka video gagal dibuka: ' + e.message);
+    }
+    renderChecklist();
+    enableButtons();
+  })();
+})();
+</script>
+</body>
+</html>

@@ -75,6 +75,7 @@ pre{background:#050709;border:1px solid var(--line);border-radius:10px;padding:1
     <button id="btnOk" disabled>Deteksi Sudah Bagus</button>
     <button id="btnBad" class="warn" disabled>Kurang Bagus</button>
   </div>
+  <button id="btnAuto" class="primary" style="width:100%;margin-bottom:8px" disabled>Kalibrasi Otomatis dari Garis</button>
   <p class="note">Nilai hasil deteksi dengan mata Anda. Garis yang sebenarnya ada di lapangan (net, service line, garis samping) harus berwarna. Garis dari pagar, bangku, atau lampu sebaiknya tidak ikut.</p>
 </section>
 
@@ -97,9 +98,10 @@ pre{background:#050709;border:1px solid var(--line);border-radius:10px;padding:1
     ['cv',     'OpenCV.js termuat di HP'],
     ['detect', 'Deteksi garis berjalan dan menemukan garis'],
     ['judge',  'Hasil deteksi dinilai (konfirmasi Anda)'],
-    ['auto',   'Kalibrasi otomatis dari garis (tahap 3B-2, belum dikerjakan)']
+    ['auto',   'Kalibrasi otomatis dari garis cukup cocok']
   ];
   let db = null, curId = null, curName = '', curUrl = null, cvReady = false, lastCount = null;
+  let lastSegs = null, db2 = null;
   const vid = $('vid'), cv_ = $('cv'), ctx = cv_.getContext('2d');
 
   // ---------- Pustaka video (IndexedDB yang sama dengan halaman lain) ----------
@@ -166,6 +168,7 @@ pre{background:#050709;border:1px solid var(--line);border-radius:10px;padding:1
     $('btnClear').disabled = !curId || lastCount === null;
     $('btnOk').disabled = lastCount === null;
     $('btnBad').disabled = lastCount === null;
+    $('btnAuto').disabled = !cvReady || lastCount === null;
     $('info').textContent = (curId ? `Video: ${curName}. ` : '') + (cvReady ? 'OpenCV siap.' : 'Menunggu OpenCV...');
   }
 
@@ -232,6 +235,7 @@ pre{background:#050709;border:1px solid var(--line);border-radius:10px;padding:1
         found.push({ x1, y1, x2, y2, horiz });
       }
       lastCount = { total: lines.rows, horizontal: hz, vertical: vt, thr };
+      lastSegs = found;
       flags.detect = lines.rows > 0 ? 'PASS' : 'FAIL';
       flags.judge = null;
       setMsg(lines.rows > 0
@@ -251,6 +255,185 @@ pre{background:#050709;border:1px solid var(--line);border-radius:10px;padding:1
   $('btnClear').onclick = () => { drawFrame(); lastCount = null; flags.detect = null; flags.judge = null; setMsg('Gambar dibersihkan.'); enableButtons(); renderChecklist(); };
   $('btnOk').onclick = () => { flags.judge = 'PASS'; setMsg('Deteksi dinilai bagus.'); renderChecklist(); };
   $('btnBad').onclick = () => { flags.judge = 'WARN'; setMsg('Deteksi dinilai kurang bagus. Coba ubah ambang atau pilih frame lain.'); renderChecklist(); };
+
+  // ---------- Kalibrasi otomatis (3B-2) ----------
+  const W = 10.97, LEN = 23.77, SING = 1.37, NET = 11.885, SVC = 6.40, CX = W / 2;
+  const WORLD = [[0, NET], [W, NET], [SING, NET + SVC], [W - SING, NET + SVC]];
+  const MODEL = [
+    [[0,0],[W,0]], [[W,0],[W,LEN]], [[W,LEN],[0,LEN]], [[0,LEN],[0,0]],
+    [[SING,0],[SING,LEN]], [[W-SING,0],[W-SING,LEN]],
+    [[SING,NET-SVC],[W-SING,NET-SVC]], [[SING,NET+SVC],[W-SING,NET+SVC]],
+    [[CX,NET-SVC],[CX,NET+SVC]], [[0,NET],[W,NET]]
+  ];
+
+  function solve(A, b) {
+    const n = b.length;
+    const M = A.map((r, i) => [...r, b[i]]);
+    for (let c = 0; c < n; c++) {
+      let p = c;
+      for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+      [M[c], M[p]] = [M[p], M[c]];
+      for (let r = 0; r < n; r++) {
+        if (r === c) continue;
+        const f = M[r][c] / M[c][c];
+        for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k];
+      }
+    }
+    return M.map((r, i) => r[n] / r[i]);
+  }
+  function homography(src, dst) {
+    const A = [], b = [];
+    for (let i = 0; i < 4; i++) {
+      const [x, y] = src[i], [u, v] = dst[i];
+      A.push([x, y, 1, 0, 0, 0, -x * u, -y * u]); b.push(u);
+      A.push([0, 0, 0, x, y, 1, -x * v, -y * v]); b.push(v);
+    }
+    const h = solve(A, b);
+    return [[h[0], h[1], h[2]], [h[3], h[4], h[5]], [h[6], h[7], 1]];
+  }
+  function proj(H, x, y) {
+    const d = H[2][0] * x + H[2][1] * y + H[2][2];
+    return [(H[0][0] * x + H[0][1] * y + H[0][2]) / d, (H[1][0] * x + H[1][1] * y + H[1][2]) / d];
+  }
+
+  // Garis tak-hingga: A*x + B*y + C = 0
+  function segToLine(s) {
+    const a = s.y2 - s.y1, b = s.x1 - s.x2, n = Math.hypot(a, b) || 1;
+    const A = a / n, B = b / n, C = -(A * s.x1 + B * s.y1);
+    return { A, B, C, len: Math.hypot(s.x2 - s.x1, s.y2 - s.y1), horiz: s.horiz,
+             mx: (s.x1 + s.x2) / 2, my: (s.y1 + s.y2) / 2 };
+  }
+  function yAt(L, x) { return Math.abs(L.B) < 1e-9 ? null : -(L.A * x + L.C) / L.B; }
+  function xAt(L, y) { return Math.abs(L.A) < 1e-9 ? null : -(L.B * y + L.C) / L.A; }
+  function inter(L1, L2) {
+    const d = L1.A * L2.B - L2.A * L1.B;
+    if (Math.abs(d) < 1e-9) return null;
+    return [(L1.B * L2.C - L2.B * L1.C) / d, (L2.A * L1.C - L1.A * L2.C) / d];
+  }
+  // Menggabungkan garis yang hampir sama (fragmen dari satu garis yang sama)
+  function dedupe(list) {
+    const out = [];
+    for (const L of list) {
+      const dup = out.some(M => Math.abs(L.A * M.A + L.B * M.B) > 0.996 && Math.abs(M.A * L.mx + M.B * L.my + M.C) < 12);
+      if (!dup) out.push(L);
+    }
+    return out;
+  }
+
+  function openCalib() {
+    return new Promise((res, rej) => {
+      const r = indexedDB.open('court_vision_calib', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('calib', { keyPath: 'videoId' });
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    });
+  }
+
+  function drawAutoOverlay(H) {
+    drawFrame();
+    ctx.strokeStyle = '#00e5d4';
+    ctx.lineWidth = Math.max(2, cv_.width / 320);
+    for (const [[x0, y0], [x1, y1]] of MODEL) {
+      ctx.beginPath();
+      for (let i = 0; i <= 40; i++) {
+        const t = i / 40;
+        const [x, y] = proj(H, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
+        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      }
+      ctx.stroke();
+    }
+  }
+
+  async function autoCalibrate() {
+    if (!lastSegs || !lastSegs.length || !curId) { setMsg('Jalankan Deteksi Garis dulu.'); return; }
+    const W0 = cv_.width, H0 = cv_.height;
+    const all = lastSegs.map(segToLine).sort((a, b) => b.len - a.len);
+    const HZ = dedupe(all.filter(l => l.horiz)).slice(0, 6);
+    const VT = dedupe(all.filter(l => !l.horiz)).slice(0, 6);
+    if (HZ.length < 2 || VT.length < 4) {
+      flags.auto = 'FAIL';
+      setMsg(`Garis belum cukup untuk kalibrasi otomatis (horizontal ${HZ.length}, vertikal ${VT.length}). Coba ambang lain atau frame lain.`);
+      renderChecklist();
+      return;
+    }
+    setMsg('Mencari kombinasi garis terbaik...');
+    await new Promise(r => setTimeout(r, 30)); // beri kesempatan layar memperbarui pesan
+
+    drawFrame();
+    const thr = +$('thr').value;
+    let src, gray, blur, mask, best = null;
+    try {
+      src = cv.imread(cv_);
+      gray = new cv.Mat(); blur = new cv.Mat(); mask = new cv.Mat();
+      cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+      cv.GaussianBlur(gray, blur, new cv.Size(3, 3), 0);
+      cv.threshold(blur, mask, thr, 255, cv.THRESH_BINARY);
+      const M = mask.data, MW = mask.cols, MH = mask.rows;
+      const white = (x, y) => {
+        const xi = Math.round(x), yi = Math.round(y);
+        if (xi < 3 || yi < 3 || xi >= MW - 3 || yi >= MH - 3) return null;
+        for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) if (M[(yi + dy) * MW + xi + dx]) return true;
+        return false;
+      };
+      const SAMPLES = MODEL.length * 61;
+      const score = Hm => {
+        let hit = 0, tot = 0;
+        for (const [[x0, y0], [x1, y1]] of MODEL) for (let i = 0; i <= 60; i++) {
+          const t = i / 60;
+          const [px, py] = proj(Hm, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
+          const w = white(px, py);
+          if (w === null) continue;
+          tot++; if (w) hit++;
+        }
+        return tot >= SAMPLES * 0.3 ? { s: hit / tot } : { s: 0 };
+      };
+
+      const yM = W0 / 2;
+      for (let i = 0; i < HZ.length; i++) for (let j = 0; j < HZ.length; j++) {
+        if (i === j) continue;
+        const hNet = HZ[i], hSvc = HZ[j];
+        const yn = yAt(hNet, yM), ys = yAt(hSvc, yM);
+        if (yn === null || ys === null || yn >= ys) continue; // net harus di atas service line
+        for (let a = 0; a < VT.length; a++) for (let b = 0; b < VT.length; b++)
+        for (let c = 0; c < VT.length; c++) for (let d = 0; d < VT.length; d++) {
+          if (new Set([a, b, c, d]).size < 4) continue;
+          const xa = xAt(VT[a], ys), xb = xAt(VT[b], ys), xc = xAt(VT[c], ys), xd = xAt(VT[d], ys);
+          if ([xa, xb, xc, xd].some(v => v === null) || !(xa < xb && xb < xc && xc < xd)) continue;
+          const p0 = inter(hNet, VT[a]), p1 = inter(hNet, VT[d]), p2 = inter(hSvc, VT[b]), p3 = inter(hSvc, VT[c]);
+          if (!p0 || !p1 || !p2 || !p3) continue;
+          const q = [p0, p1, p2, p3];
+          const H = homography(WORLD, q);
+          const r = score(H);
+          if (!(r.s >= 0)) continue;
+          if (!best || r.s > best.s) best = { s: r.s, pts: q, H };
+        }
+      }
+    } catch (e) {
+      flags.auto = 'FAIL';
+      setMsg('Kalibrasi otomatis gagal: ' + e.message);
+      renderChecklist();
+      return;
+    } finally {
+      [src, gray, blur, mask].forEach(m => { if (m && m.delete) m.delete(); });
+    }
+
+    if (!best || best.s < 0.5) {
+      flags.auto = 'FAIL';
+      setMsg(`Kecocokan terbaik hanya ${best ? Math.round(best.s * 100) : 0}%. Belum cukup yakin. Pakai kalibrasi manual atau coba frame/ambang lain.`);
+      renderChecklist();
+      return;
+    }
+
+    drawAutoOverlay(best.H);
+    const norm = best.pts.map(([x, y]) => [x / cv_.width, y / cv_.height]);
+    const t = db2.transaction(['calib'], 'readwrite');
+    t.objectStore('calib').put({ videoId: curId, v: 2, pts: norm, confirmed: false, savedAt: Date.now(), source: 'auto' });
+    await new Promise((res, rej) => { t.oncomplete = res; t.onerror = () => rej(t.error); });
+
+    flags.auto = 'PASS';
+    setMsg(`Kalibrasi otomatis selesai (kecocokan ${Math.round(best.s * 100)}%). Buka court-calibration untuk konfirmasi garis birunya.`);
+    renderChecklist();
+  }
+  $('btnAuto').onclick = autoCalibrate;
 
   // ---------- Checklist & laporan ----------
   function renderChecklist() {
@@ -285,6 +468,7 @@ pre{background:#050709;border:1px solid var(--line);border-radius:10px;padding:1
   (async () => {
     try {
       db = await openLib();
+      db2 = await openCalib();
       await refreshLib();
     } catch (e) {
       setMsg('Pustaka video gagal dibuka: ' + e.message);

@@ -228,8 +228,11 @@ pre{background:#050709;border:1px solid var(--line);border-radius:10px;padding:1
   // ---------- Simpan & muat kalibrasi ----------
   async function saveCalib() {
     if (!curId || pts.length !== 4) return;
+    const norm = pts.map(([x, y]) => [x / cv.width, y / cv.height]);
+    const rec = { v: 2, pts: norm, confirmed: flags.overlay === 'PASS', savedAt: Date.now() };
     const t = db2.transaction(['calib'], 'readwrite');
-    t.objectStore('calib').put({ videoId: curId, pts, confirmed: flags.overlay === 'PASS', savedAt: Date.now() });
+    t.objectStore('calib').put({ videoId: curId, ...rec });
+    t.objectStore('calib').put({ videoId: '__last__', ...rec });
     await txDone(t);
   }
   async function loadCalib(id) {
@@ -462,13 +465,20 @@ pre{background:#050709;border:1px solid var(--line);border-radius:10px;padding:1
   };
 
   async function loadSavedCalibration() {
-    const c = await loadCalib(curId).catch(() => null);
-    if (c && c.pts && c.pts.length === 4) {
-      pts = c.pts;
+    let c = await loadCalib(curId).catch(() => null);
+    let fromLast = false;
+    if (!(c && c.v === 2 && c.pts && c.pts.length === 4)) {
+      c = await loadCalib('__last__').catch(() => null);
+      fromLast = true;
+    }
+    if (c && c.v === 2 && c.pts && c.pts.length === 4) {
+      pts = c.pts.map(([x, y]) => [x * cv.width, y * cv.height]);
       computeCalibration();
-      flags.persist = 'PASS';
-      flags.overlay = c.confirmed ? 'PASS' : null;
-      setMsg('Kalibrasi tersimpan dimuat ulang.');
+      flags.persist = fromLast ? null : 'PASS';
+      flags.overlay = !fromLast && c.confirmed ? 'PASS' : null;
+      setMsg(fromLast
+        ? 'Memakai kalibrasi terakhir. Jika garis biru pas, tekan Garis Cocok. Jika tidak, geser titiknya.'
+        : 'Kalibrasi tersimpan dimuat ulang.');
     } else {
       pts = []; Hw2i = null; Hi2w = null; flags.calib = null; flags.map = null; flags.overlay = null;
     }
